@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SUB-SERVER CONTROL</title>
+<script>
+  // ===== イベント設定（ここを書き換えれば内容を変更できます） =====
+  const CONFIG = {
+    password: "0731",
+    countdownSeconds: 600,          // カウントダウンの秒数（0になっても入力は可能）
+    warningTitle: "⚠️ WARNING: AUTOMATIC DATA PURGE IN PROGRESS",
+    warningSub: "自動データ消去プログラム作動中",
+    instruction: "サブサーバーを強制停止し、データを保護するには認証コードを入力してください。",
+    hint: "ヒント：この街のはじまりの日（数字4桁）",
+    errorText: "INVALID CODE - 認証失敗",
+    successHeader: "SYSTEM SHUTDOWN / SAFE MODE",
+    successLines: [
+      "【サブサーバーの強制停止に成功しました】",
+      "ガレージデータおよび資金データの保護が完了しました。",
+      "イベントクリア！速やかに現地運営へ報告し、報酬を受け取ってください。"
+    ]
+  };
+</script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #050304;
+    --red: #ff3b3b;
+    --orange: #ff9a2e;
+    --dim: #7a2a2a;
+    --green: #39ff7a;
+    --green-dim: #1f9e4b;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--orange);
+    font-family: "Consolas", "MS Gothic", "Courier New", monospace;
+    overflow-x: hidden;
+    transition: background .6s;
+  }
+  /* 走査線と赤いビネット */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 10;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.25) 0 1px, transparent 1px 3px);
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9;
+    box-shadow: inset 0 0 120px rgba(255,30,30,.35);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { box-shadow: inset 0 0 60px rgba(255,30,30,.12); } }
+
+  .wrap {
+    min-height: 100%; max-width: 860px; margin: 0 auto;
+    padding: 20px 16px 28px; display: flex; flex-direction: column; gap: 16px;
+  }
+
+  #alarm { display: flex; flex-direction: column; gap: 16px; }
+
+  /* ---------- 上部警告 ---------- */
+  .top {
+    border: 2px solid var(--red); border-radius: 6px; padding: 14px 16px;
+    background: rgba(255,40,40,.07);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    box-shadow: 0 0 18px rgba(255,40,40,.35), inset 0 0 18px rgba(255,40,40,.12);
+  }
+  .lamp {
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    background: var(--red); box-shadow: 0 0 14px var(--red), 0 0 30px var(--red);
+    animation: blink .8s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: .15; box-shadow: none; } }
+  .warn { flex: 1; min-width: 220px; }
+  .warn h1 {
+    font-size: clamp(14px, 2.6vw, 20px); color: var(--red); letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(255,59,59,.8);
+    animation: blink 1.2s steps(1) infinite;
+  }
+  .warn p { font-size: 13px; color: var(--orange); margin-top: 4px; text-shadow: 0 0 6px rgba(255,154,46,.6); }
+  .timer { text-align: right; }
+  .timer small { display: block; font-size: 11px; color: var(--dim); letter-spacing: 2px; }
+  .timer b {
+    font-size: clamp(30px, 6vw, 44px); color: var(--red); letter-spacing: 2px;
+    text-shadow: 0 0 10px rgba(255,59,59,.9);
+  }
+  .timer.critical b { animation: blink .5s steps(1) infinite; }
+
+  /* ---------- 進捗バー ---------- */
+  .purge { font-size: 12px; color: var(--orange); }
+  .bar { height: 10px; margin-top: 6px; border: 1px solid var(--dim); background: #140606; overflow: hidden; }
+  .bar i {
+    display: block; height: 100%; width: 0%;
+    background: repeating-linear-gradient(45deg, var(--red) 0 8px, #b31f1f 8px 16px);
+    box-shadow: 0 0 10px var(--red); transition: width 1s linear;
+  }
+
+  /* ---------- ログ ---------- */
+  .log {
+    font-size: 12px; line-height: 1.7; color: var(--dim);
+    height: 96px; overflow: hidden; border-left: 2px solid var(--dim); padding-left: 10px;
+  }
+  .log .hot { color: var(--orange); }
+
+  /* ---------- 入力パネル ---------- */
+  .panel {
+    border: 1px solid var(--orange); border-radius: 6px; padding: 20px 18px 22px;
+    background: rgba(255,154,46,.04);
+    box-shadow: 0 0 14px rgba(255,154,46,.2);
+  }
+  .panel .inst { font-size: 15px; line-height: 1.7; color: #ffd2a1; }
+  .panel .hint {
+    margin-top: 10px; display: inline-block; padding: 4px 10px; font-size: 14px;
+    color: var(--orange); border: 1px dashed var(--orange);
+    text-shadow: 0 0 6px rgba(255,154,46,.6);
+  }
+  form { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap; }
+  form label { width: 100%; font-size: 12px; color: var(--dim); letter-spacing: 2px; }
+  #code {
+    flex: 1; min-width: 0; height: 58px; padding: 0 14px;
+    background: #000; color: var(--orange); border: 2px solid var(--orange); border-radius: 4px;
+    font: inherit; font-size: 30px; letter-spacing: 14px; text-align: center; outline: none;
+    caret-color: var(--orange);
+  }
+  #code:focus { box-shadow: 0 0 0 3px rgba(255,154,46,.25), 0 0 14px rgba(255,154,46,.5); }
+  #code::placeholder { color: #4a2a10; letter-spacing: 14px; }
+  .exec {
+    height: 58px; padding: 0 22px; border-radius: 4px; cursor: pointer;
+    background: var(--red); color: #fff; border: none; font: inherit; font-size: 16px; font-weight: 700;
+    letter-spacing: 2px; box-shadow: 0 0 14px rgba(255,59,59,.6);
+  }
+  .exec:hover { background: #ff5959; }
+  .exec:disabled { opacity: .5; cursor: default; }
+  .msg { min-height: 24px; margin-top: 12px; font-size: 15px; font-weight: 700; }
+  .msg.err { color: var(--red); text-shadow: 0 0 8px rgba(255,59,59,.8); }
+  .msg.wait { color: var(--orange); }
+  .shake { animation: shake .35s; }
+  @keyframes shake { 20%,60% { transform: translateX(-8px); } 40%,80% { transform: translateX(8px); } }
+
+  /* ---------- 成功画面（緑基調） ---------- */
+  #success { display: none; }
+  body.safe { background: #020804; color: var(--green); }
+  body.safe::after { box-shadow: inset 0 0 120px rgba(57,255,122,.18); animation: none; }
+  body.safe #alarm { display: none; }
+  body.safe #success { display: flex; }
+  #success {
+    flex-direction: column; gap: 18px; text-align: center; align-items: center;
+    padding-top: 6vh; animation: fade .6s ease-out;
+  }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .safe-icon {
+    width: 86px; height: 86px; border-radius: 50%; border: 3px solid var(--green);
+    display: grid; place-items: center; box-shadow: 0 0 24px rgba(57,255,122,.5);
+  }
+  .safe-head {
+    font-size: clamp(22px, 5vw, 36px); font-weight: 700; letter-spacing: 3px;
+    text-shadow: 0 0 12px rgba(57,255,122,.8);
+  }
+  .safe-status { font-size: 12px; color: var(--green-dim); letter-spacing: 2px; }
+  .safe-box {
+    width: 100%; border: 1px solid var(--green); border-radius: 6px; padding: 20px 18px;
+    background: rgba(57,255,122,.05); text-align: left; line-height: 2;
+    box-shadow: 0 0 16px rgba(57,255,122,.2);
+  }
+  .safe-box div:first-child { font-size: 18px; font-weight: 700; color: #b8ffd0; text-shadow: 0 0 8px rgba(57,255,122,.7); }
+  .safe-box div:last-child { margin-top: 8px; color: #ffe066; text-shadow: 0 0 6px rgba(255,224,102,.6); font-weight: 700; }
+
+  @media (max-width: 560px) {
+    .timer { text-align: left; width: 100%; }
+    .exec { width: 100%; }
+    #code { flex-basis: 100%; }
+    .log { height: 72px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- 警告状態 -->
+  <div id="alarm">
+    <div class="top">
+      <div class="lamp"></div>
+      <div class="warn">
+        <h1 id="warn-title"></h1>
+        <p id="warn-sub"></p>
+      </div>
+      <div class="timer" id="timer">
+        <small>TIME REMAINING</small>
+        <b id="time">--:--</b>
+      </div>
+    </div>
+
+    <div class="purge">
+      DATA PURGE PROGRESS: <span id="pct">0</span>%
+      <div class="bar"><i id="bar"></i></div>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <div class="panel" id="panel">
+      <p class="inst" id="inst"></p>
+      <p class="hint" id="hint"></p>
+      <form id="form" autocomplete="off">
+        <label for="code">AUTHORIZATION CODE</label>
+        <input id="code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4"
+               placeholder="____" aria-label="認証コード" spellcheck="false">
+        <button class="exec" id="exec" type="submit">強制停止</button>
+      </form>
+      <div class="msg" id="msg" role="status"></div>
+    </div>
+  </div>
+
+  <!-- 成功状態 -->
+  <div id="success">
+    <div class="safe-icon">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#39ff7a" stroke-width="2.5"><path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/><path d="M8 12l3 3 5-6"/></svg>
+    </div>
+    <div class="safe-head" id="safe-head"></div>
+    <div class="safe-status">SUB-SERVER: OFFLINE ／ DATA: PROTECTED ／ PURGE: ABORTED</div>
+    <div class="safe-box" id="safe-box"></div>
+  </div>
+
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  // CONFIGの文言を反映
+  $("warn-title").textContent = CONFIG.warningTitle;
+  $("warn-sub").textContent = CONFIG.warningSub;
+  $("inst").textContent = CONFIG.instruction;
+  $("hint").textContent = CONFIG.hint;
+  $("safe-head").textContent = CONFIG.successHeader;
+  CONFIG.successLines.forEach(line => {
+    const d = document.createElement("div");
+    d.textContent = line;
+    $("safe-box").appendChild(d);
+  });
+
+  // カウントダウンと消去進捗
+  let left = CONFIG.countdownSeconds;
+  let stopped = false;
+  function render() {
+    const m = String(Math.floor(left / 60)).padStart(2, "0");
+    const s = String(left % 60).padStart(2, "0");
+    $("time").textContent = m + ":" + s;
+    $("timer").classList.toggle("critical", left <= 60);
+    const pct = Math.min(99, Math.floor((1 - left / CONFIG.countdownSeconds) * 100));
+    $("pct").textContent = pct;
+    $("bar").style.width = pct + "%";
+  }
+  render();
+  const timerId = setInterval(() => {
+    if (stopped) return;
+    if (left > 0) left--;
+    render();
+  }, 1000);
+
+  // 流れるログ
+  const files = ["garage_db/vehicles.dat", "bank/accounts.db", "garage_db/customers.csv",
+    "bank/transactions.log", "garage_db/parts_stock.dat", "bank/vault_keys.enc", "sys/backup_index.bin"];
+  const logLines = [];
+  function pushLog(text, hot) {
+    logLines.push({ text, hot });
+    if (logLines.length > 6) logLines.shift();
+    $("log").innerHTML = "";
+    logLines.forEach(l => {
+      const d = document.createElement("div");
+      if (l.hot) d.className = "hot";
+      d.textContent = l.text;
+      $("log").appendChild(d);
+    });
+  }
+  const logId = setInterval(() => {
+    if (stopped) return;
+    const f = files[Math.floor(Math.random() * files.length)];
+    const hot = Math.random() < .35;
+    pushLog((hot ? "[DELETE] " : "[SCAN]   ") + f + (hot ? " ... ERASED" : " ... OK"), hot);
+  }, 900);
+
+  // 数字以外は入力させない
+  const code = $("code"), msg = $("msg");
+  code.addEventListener("input", () => { code.value = code.value.replace(/\D/g, "").slice(0, 4); });
+
+  // 認証
+  $("form").addEventListener("submit", e => {
+    e.preventDefault();
+    const val = code.value.trim();
+    if (!val) { code.focus(); return; }
+
+    if (val === CONFIG.password) {
+      stopped = true;
+      code.disabled = true; $("exec").disabled = true;
+      msg.className = "msg wait";
+      msg.textContent = "認証中... サブサーバーへ停止信号を送信しています";
+      setTimeout(() => {
+        clearInterval(timerId); clearInterval(logId);
+        document.body.classList.add("safe");
+        window.scrollTo(0, 0);
+      }, 1500);
+    } else {
+      msg.className = "msg err";
+      msg.textContent = CONFIG.errorText;
+      code.value = "";
+      const p = $("panel");
+      p.classList.remove("shake"); void p.offsetWidth; p.classList.add("shake");
+      code.focus();
+    }
+  });
+
+  code.focus();
+</script>
+</body>
+</html>
